@@ -1,6 +1,12 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import List, Optional
+from bson import ObjectId
+
+from database import db, create_document, get_documents
+from schemas import Project as ProjectSchema, Contact as ContactSchema
 
 app = FastAPI()
 
@@ -33,36 +39,74 @@ def test_database():
     }
     
     try:
-        # Try to import database module
-        from database import db
-        
         if db is not None:
             response["database"] = "✅ Available"
             response["database_url"] = "✅ Configured"
             response["database_name"] = db.name if hasattr(db, 'name') else "✅ Connected"
             response["connection_status"] = "Connected"
-            
-            # Try to list collections to verify connectivity
             try:
                 collections = db.list_collection_names()
-                response["collections"] = collections[:10]  # Show first 10 collections
+                response["collections"] = collections[:10]
                 response["database"] = "✅ Connected & Working"
             except Exception as e:
                 response["database"] = f"⚠️  Connected but Error: {str(e)[:50]}"
         else:
             response["database"] = "⚠️  Available but not initialized"
             
-    except ImportError:
-        response["database"] = "❌ Database module not found (run enable-database first)"
     except Exception as e:
         response["database"] = f"❌ Error: {str(e)[:50]}"
     
     # Check environment variables
-    import os
     response["database_url"] = "✅ Set" if os.getenv("DATABASE_URL") else "❌ Not Set"
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
     
     return response
+
+# -------------------- API: Projects --------------------
+
+@app.get("/api/projects")
+def list_projects(limit: Optional[int] = None):
+    try:
+        docs = get_documents("project", {}, limit)
+        # Convert ObjectId to string
+        for d in docs:
+            if isinstance(d.get("_id"), ObjectId):
+                d["_id"] = str(d["_id"])
+        # Sort by created_at desc if present
+        docs.sort(key=lambda x: x.get("created_at"), reverse=True)
+        return {"items": docs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/projects", status_code=201)
+def create_project(project: ProjectSchema):
+    try:
+        inserted_id = create_document("project", project)
+        return {"inserted_id": inserted_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# -------------------- API: Contacts --------------------
+
+@app.post("/api/contacts", status_code=201)
+def create_contact(contact: ContactSchema):
+    try:
+        inserted_id = create_document("contact", contact)
+        return {"inserted_id": inserted_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/contacts")
+def list_contacts(limit: Optional[int] = 50):
+    try:
+        docs = get_documents("contact", {}, limit)
+        for d in docs:
+            if isinstance(d.get("_id"), ObjectId):
+                d["_id"] = str(d["_id"])
+        docs.sort(key=lambda x: x.get("created_at"), reverse=True)
+        return {"items": docs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
